@@ -1,0 +1,19 @@
+# Legacy SQLDash code + third-party reference (kept locally, never published)
+legacy/
+PerformanceMonitor/
+
+# New SQLDash system — local dev artifacts
+lake/local/
+**/inbox/
+**/*.ducklake
+**/*.ducklake.wal
+
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Logs / temp
+*.log
+.env
+.env.local
