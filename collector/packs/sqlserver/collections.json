@@ -1,6 +1,6 @@
 {
   "platform": "sqlserver",
-  "description": "SQL Server collection pack. Each collector's `schema` is the emit contract: the ordered column list (== target table column order), each column's DuckDB type, and its source: 'stamp' (collector-filled identity/partition), 'query' (from the SQL result by name), or 'const' (literal, default null).",
+  "description": "SQL Server collection pack. Each collector's `schema` is the emit contract: the ordered column list (== target table column order), each column's DuckDB type, and its source: 'stamp' (collector-filled identity/partition: instance_id/platform/collected_at/year/month/day), 'query' (from the SQL result by name — includes native database_id for database-level collectors), or 'const' (literal, default null). Keys are integers: instance_id from the registry, database_id native from sys.databases. No surrogate GUIDs, no source_query_id.",
   "collectors": [
     {
       "name": "metric_cpu",
@@ -10,7 +10,7 @@
       "timeout_seconds": 5,
       "query": "queries/metric_cpu.sql",
       "schema": [
-        { "name": "instance_key",        "type": "UUID",      "source": "stamp" },
+        { "name": "instance_id",         "type": "INTEGER",   "source": "stamp" },
         { "name": "platform",            "type": "VARCHAR",   "source": "stamp" },
         { "name": "collected_at",        "type": "TIMESTAMP", "source": "stamp" },
         { "name": "year",                "type": "SMALLINT",  "source": "stamp" },
@@ -18,8 +18,7 @@
         { "name": "day",                 "type": "TINYINT",   "source": "stamp" },
         { "name": "engine_cpu_percent",  "type": "SMALLINT",  "source": "query" },
         { "name": "other_cpu_percent",   "type": "SMALLINT",  "source": "query" },
-        { "name": "system_idle_percent", "type": "SMALLINT",  "source": "query" },
-        { "name": "source_query_id",     "type": "VARCHAR",   "source": "stamp" }
+        { "name": "system_idle_percent", "type": "SMALLINT",  "source": "query" }
       ]
     },
     {
@@ -30,7 +29,7 @@
       "timeout_seconds": 5,
       "query": "queries/metric_memory_ple.sql",
       "schema": [
-        { "name": "instance_key",           "type": "UUID",         "source": "stamp" },
+        { "name": "instance_id",            "type": "INTEGER",      "source": "stamp" },
         { "name": "platform",               "type": "VARCHAR",      "source": "stamp" },
         { "name": "collected_at",           "type": "TIMESTAMP",    "source": "stamp" },
         { "name": "year",                   "type": "SMALLINT",     "source": "stamp" },
@@ -39,8 +38,7 @@
         { "name": "page_residency_seconds", "type": "BIGINT",       "source": "query" },
         { "name": "buffer_hit_ratio",       "type": "DECIMAL(5,2)", "source": "const" },
         { "name": "grants_pending",         "type": "INTEGER",      "source": "const" },
-        { "name": "grants_outstanding",     "type": "INTEGER",      "source": "const" },
-        { "name": "source_query_id",        "type": "VARCHAR",      "source": "stamp" }
+        { "name": "grants_outstanding",     "type": "INTEGER",      "source": "const" }
       ]
     },
     {
@@ -51,14 +49,13 @@
       "timeout_seconds": 5,
       "query": "queries/metric_sessions.sql",
       "schema": [
-        { "name": "instance_key",    "type": "UUID",      "source": "stamp" },
+        { "name": "instance_id",     "type": "INTEGER",   "source": "stamp" },
         { "name": "platform",        "type": "VARCHAR",   "source": "stamp" },
         { "name": "collected_at",    "type": "TIMESTAMP", "source": "stamp" },
         { "name": "year",            "type": "SMALLINT",  "source": "stamp" },
         { "name": "month",           "type": "TINYINT",   "source": "stamp" },
         { "name": "day",             "type": "TINYINT",   "source": "stamp" },
-        { "name": "active_sessions", "type": "INTEGER",   "source": "query" },
-        { "name": "source_query_id", "type": "VARCHAR",   "source": "stamp" }
+        { "name": "active_sessions", "type": "INTEGER",   "source": "query" }
       ]
     },
     {
@@ -69,8 +66,8 @@
       "timeout_seconds": 30,
       "query": "queries/metric_database_io.sql",
       "schema": [
-        { "name": "instance_key",         "type": "UUID",      "source": "stamp" },
-        { "name": "database_key",          "type": "UUID",      "source": "dbkey" },
+        { "name": "instance_id",           "type": "INTEGER",   "source": "stamp" },
+        { "name": "database_id",            "type": "INTEGER",   "source": "query" },
         { "name": "platform",              "type": "VARCHAR",   "source": "stamp" },
         { "name": "collected_at",          "type": "TIMESTAMP", "source": "stamp" },
         { "name": "year",                  "type": "SMALLINT",  "source": "stamp" },
@@ -84,8 +81,7 @@
         { "name": "num_of_bytes_written",  "type": "BIGINT",    "source": "query" },
         { "name": "io_stall_write_ms",     "type": "BIGINT",    "source": "query" },
         { "name": "io_stall",              "type": "BIGINT",    "source": "query" },
-        { "name": "size_on_disk_bytes",    "type": "BIGINT",    "source": "query" },
-        { "name": "source_query_id",       "type": "VARCHAR",   "source": "stamp" }
+        { "name": "size_on_disk_bytes",    "type": "BIGINT",    "source": "query" }
       ]
     },
     {
@@ -96,15 +92,14 @@
       "timeout_seconds": 5,
       "query": "queries/metric_blocking.sql",
       "schema": [
-        { "name": "instance_key",          "type": "UUID",      "source": "stamp" },
-        { "name": "database_key",           "type": "UUID",      "source": "dbkey" },
-        { "name": "platform",               "type": "VARCHAR",   "source": "stamp" },
-        { "name": "collected_at",           "type": "TIMESTAMP", "source": "stamp" },
-        { "name": "year",                   "type": "SMALLINT",  "source": "stamp" },
-        { "name": "month",                  "type": "TINYINT",   "source": "stamp" },
-        { "name": "day",                    "type": "TINYINT",   "source": "stamp" },
-        { "name": "blocked_session_count",  "type": "INTEGER",   "source": "query" },
-        { "name": "source_query_id",        "type": "VARCHAR",   "source": "stamp" }
+        { "name": "instance_id",            "type": "INTEGER",   "source": "stamp" },
+        { "name": "database_id",             "type": "INTEGER",   "source": "query" },
+        { "name": "platform",                "type": "VARCHAR",   "source": "stamp" },
+        { "name": "collected_at",            "type": "TIMESTAMP", "source": "stamp" },
+        { "name": "year",                    "type": "SMALLINT",  "source": "stamp" },
+        { "name": "month",                   "type": "TINYINT",   "source": "stamp" },
+        { "name": "day",                     "type": "TINYINT",   "source": "stamp" },
+        { "name": "blocked_session_count",   "type": "INTEGER",   "source": "query" }
       ]
     },
     {
@@ -115,10 +110,9 @@
       "timeout_seconds": 10,
       "query": "queries/databases.sql",
       "schema": [
-        { "name": "instance_key",        "type": "UUID",      "source": "stamp" },
-        { "name": "database_key",         "type": "UUID",      "source": "dbkey" },
+        { "name": "instance_id",          "type": "INTEGER",   "source": "stamp" },
+        { "name": "database_id",           "type": "INTEGER",   "source": "query" },
         { "name": "platform",             "type": "VARCHAR",   "source": "stamp" },
-        { "name": "database_id",          "type": "INTEGER",   "source": "query" },
         { "name": "database_name",        "type": "VARCHAR",   "source": "query" },
         { "name": "create_date",          "type": "TIMESTAMP", "source": "query" },
         { "name": "compatibility_level",  "type": "SMALLINT",  "source": "query" },
@@ -132,8 +126,7 @@
         { "name": "owner_name",           "type": "VARCHAR",   "source": "query" },
         { "name": "data_file_size_mb",    "type": "INTEGER",   "source": "query" },
         { "name": "log_file_size_mb",     "type": "INTEGER",   "source": "query" },
-        { "name": "collected_at",         "type": "TIMESTAMP", "source": "stamp" },
-        { "name": "source_query_id",      "type": "VARCHAR",   "source": "stamp" }
+        { "name": "collected_at",         "type": "TIMESTAMP", "source": "stamp" }
       ]
     }
   ]

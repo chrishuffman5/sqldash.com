@@ -1,7 +1,7 @@
 -- SQLDash lake — partitioning for time-series tables.
 -- Hot streams: (platform, year, month, day). Hourly rollup (health_scores): (platform, year, month).
 -- Registry/dimension tables are intentionally NOT partitioned (low volume).
--- Never partition by raw instance_key (UUID -> file explosion); it stays a column with min/max stats.
+-- Never partition by raw instance_id (high cardinality -> file explosion); it stays a column with min/max stats.
 
 ALTER TABLE common.pings              SET PARTITIONED BY (platform, year, month, day);
 ALTER TABLE common.metric_cpu         SET PARTITIONED BY (platform, year, month, day);

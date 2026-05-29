@@ -1,8 +1,8 @@
 /**
  * SQLDash MCP server — exposes the DuckLake fleet store to LLM clients over stdio.
  *
- * Read-only consumer of the lake the PowerShell collectors + TS writer populate. Tools that read
- * the scoring view chain (problematic_instances) require lake/views/scoring.sql to be applied.
+ * Read-only consumer of the lake the collectors populate (direct-write, integer instance_id keys).
+ * Tools that read the scoring view chain (problematic_instances) require lake/views/scoring.sql applied.
  *
  * Env: SQLDASH_CATALOG, SQLDASH_DATA (default: local dev lake under lake/local/).
  */
@@ -78,17 +78,17 @@ server.registerTool(
   async ({ instance_fqn }) => {
     try {
       const fqn = instance_fqn.replace(/'/g, "''");
-      const ik = await query(`SELECT instance_key FROM common.instances WHERE instance_fqn = '${fqn}' LIMIT 1`);
+      const ik = await query(`SELECT instance_id FROM common.instances WHERE instance_fqn = '${fqn}' LIMIT 1`);
       if (!ik.length) return asText({ note: `no instance '${instance_fqn}'` });
-      const key = ik[0].instance_key as string;
+      const key = Number(ik[0].instance_id);
       const [details, cpu, mem, sess, dbs] = await Promise.all([
-        query(`SELECT * FROM common.instance_details WHERE instance_key='${key}' ORDER BY collected_at DESC LIMIT 1`),
-        query(`SELECT collected_at, engine_cpu_percent, other_cpu_percent, system_idle_percent FROM common.metric_cpu WHERE instance_key='${key}' ORDER BY collected_at DESC LIMIT 1`),
-        query(`SELECT collected_at, page_residency_seconds FROM common.metric_memory WHERE instance_key='${key}' AND page_residency_seconds IS NOT NULL ORDER BY collected_at DESC LIMIT 1`),
-        query(`SELECT collected_at, active_sessions FROM common.metric_sessions WHERE instance_key='${key}' ORDER BY collected_at DESC LIMIT 1`),
-        query(`SELECT count(DISTINCT database_key) AS database_count FROM common.databases WHERE instance_key='${key}'`),
+        query(`SELECT * FROM common.instance_details WHERE instance_id=${key} ORDER BY collected_at DESC LIMIT 1`),
+        query(`SELECT collected_at, engine_cpu_percent, other_cpu_percent, system_idle_percent FROM common.metric_cpu WHERE instance_id=${key} ORDER BY collected_at DESC LIMIT 1`),
+        query(`SELECT collected_at, page_residency_seconds FROM common.metric_memory WHERE instance_id=${key} AND page_residency_seconds IS NOT NULL ORDER BY collected_at DESC LIMIT 1`),
+        query(`SELECT collected_at, active_sessions FROM common.metric_sessions WHERE instance_id=${key} ORDER BY collected_at DESC LIMIT 1`),
+        query(`SELECT count(DISTINCT database_id) AS database_count FROM common.databases WHERE instance_id=${key}`),
       ]);
-      return asText({ instance_fqn, instance_key: key, details: details[0] ?? null, latest_cpu: cpu[0] ?? null, latest_memory: mem[0] ?? null, latest_sessions: sess[0] ?? null, databases: dbs[0] ?? null });
+      return asText({ instance_fqn, instance_id: key, details: details[0] ?? null, latest_cpu: cpu[0] ?? null, latest_memory: mem[0] ?? null, latest_sessions: sess[0] ?? null, databases: dbs[0] ?? null });
     } catch (e) { return asError(e); }
   },
 );
@@ -104,7 +104,7 @@ server.registerTool(
         : metric === 'memory' ? 'page_residency_seconds' : 'active_sessions';
       const table = metric === 'cpu' ? 'metric_cpu' : metric === 'memory' ? 'metric_memory' : 'metric_sessions';
       return asText(await query(
-        `SELECT m.collected_at, ${sel} FROM common.${table} m JOIN common.instances i USING (instance_key)
+        `SELECT m.collected_at, ${sel} FROM common.${table} m JOIN common.instances i USING (instance_id)
          WHERE i.instance_fqn='${fqn}' AND m.collected_at >= now() - INTERVAL '${hours} hours' ORDER BY m.collected_at`));
     } catch (e) { return asError(e); }
   },

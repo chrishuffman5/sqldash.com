@@ -1,8 +1,8 @@
 -- pack: sqlserver  collector: metric_database_io  ->  common.metric_database_io
 -- CUMULATIVE per-database IO since last restart. Deltas/latency computed read-side in scoring.
--- Returns database_name (collector resolves -> database_key). last_restart_at = tempdb create_date.
+-- Returns the native database_id (instance_id + database_id is the key). last_restart_at = tempdb create_date.
 SELECT
-    DB_NAME(v.database_id)                          AS database_name,
+    v.database_id                                   AS database_id,
     (SELECT create_date FROM sys.databases WHERE database_id = 2) AS last_restart_at,  -- tempdb
     SUM(CONVERT(BIGINT, v.num_of_reads))            AS num_of_reads,
     SUM(CONVERT(BIGINT, v.num_of_bytes_read))       AS num_of_bytes_read,

@@ -1,6 +1,9 @@
 -- SQLDash lake — common (cross-platform) tables
 -- Conventions: snake_case; UTC `collected_at` on every fact row; booleans is_*;
--- self-describing tuple on every fact row: instance_key, platform, collected_at, source_query_id.
+-- self-describing tuple on every fact row: instance_id, platform, collected_at.
+-- Keys are INTEGERS: instance_id is minted by the Postgres registry (registry.instances IDENTITY,
+-- start 1000); database_id is the NATIVE sys.databases id. The unique grain is
+-- instance_id (+ database_id) + collected_at — no surrogate GUIDs.
 -- Time-series tables carry stamped year/month/day partition columns (derived from collected_at
 -- by the collector) and are partitioned by (platform, year, month, day).
 
@@ -8,11 +11,12 @@
 -- Registry / inventory (dimensions — not partitioned, low volume)
 ------------------------------------------------------------------------------------------------
 
--- Instance registry. instance_key is minted by the registration authority (get-or-create on
--- normalized instance_fqn). Uniqueness is enforced at the registration path, NOT by the lake.
+-- Instance dimension (analytical copy of the Postgres registry). instance_id is assigned by the
+-- registration authority (registry.get_or_create_instance on normalized instance_fqn) and is the
+-- stable integer key carried on every fact row.
 CREATE TABLE IF NOT EXISTS common.instances (
-    instance_key     UUID        NOT NULL,
-    instance_fqn     VARCHAR     NOT NULL,   -- normalized 'server\instance:port' (natural key)
+    instance_id      INTEGER     NOT NULL,
+    instance_fqn     VARCHAR     NOT NULL,   -- normalized 'server\instance:port' (natural label)
     instance_name    VARCHAR,
     platform         VARCHAR     NOT NULL,   -- 'sqlserver' | 'postgres'
     environment      VARCHAR,                -- 'P','Q',...  (legacy Environment)
@@ -27,13 +31,13 @@ CREATE TABLE IF NOT EXISTS common.instances (
     updated_at       TIMESTAMP
 );
 
--- Database registry. database_key is get-or-create on (instance_key, normalized database_name)
--- so it survives native database_id/oid reuse after DROP and AG failover.
+-- Database dimension. Keyed by (instance_id, native database_id from sys.databases). Native ids
+-- can be reused after DROP / AG failover; per the design decision we accept the native id as the key
+-- (instance_id + database_id + collected_at uniquely identifies a snapshot).
 CREATE TABLE IF NOT EXISTS common.databases (
-    instance_key         UUID      NOT NULL,
-    database_key         UUID      NOT NULL,
+    instance_id          INTEGER   NOT NULL,
+    database_id          INTEGER   NOT NULL,   -- native sys.databases id (key component)
     platform             VARCHAR   NOT NULL,
-    database_id          INTEGER,             -- native id (non-key attribute)
     database_name        VARCHAR   NOT NULL,
     create_date          TIMESTAMP,
     compatibility_level  SMALLINT,
@@ -47,13 +51,12 @@ CREATE TABLE IF NOT EXISTS common.databases (
     owner_name           VARCHAR,
     data_file_size_mb    INTEGER,
     log_file_size_mb     INTEGER,
-    collected_at         TIMESTAMP NOT NULL,
-    source_query_id      VARCHAR   NOT NULL
+    collected_at         TIMESTAMP NOT NULL
 );
 
 -- Point-in-time instance details (current state; one row per instance per collection).
 CREATE TABLE IF NOT EXISTS common.instance_details (
-    instance_key            UUID      NOT NULL,
+    instance_id             INTEGER   NOT NULL,
     platform                VARCHAR   NOT NULL,
     server_name             VARCHAR,
     product_version         VARCHAR,
@@ -71,8 +74,7 @@ CREATE TABLE IF NOT EXISTS common.instance_details (
     max_memory_mb           INTEGER,
     max_dop                 SMALLINT,
     engine_start_time       TIMESTAMP,
-    collected_at            TIMESTAMP NOT NULL,
-    source_query_id         VARCHAR   NOT NULL
+    collected_at            TIMESTAMP NOT NULL
 );
 
 ------------------------------------------------------------------------------------------------
@@ -80,20 +82,21 @@ CREATE TABLE IF NOT EXISTS common.instance_details (
 ------------------------------------------------------------------------------------------------
 
 -- Heartbeat / reachability. Drives discovery eligibility and "unresponsive" detection.
+-- The first interaction every cycle is a timed connection test; response_time_ms is that latency,
+-- and a 5 s connect timeout surfaces as response_time_ms = 5000 (one of the highest-value datasets).
 CREATE TABLE IF NOT EXISTS common.pings (
-    instance_key     UUID      NOT NULL,
+    instance_id      INTEGER   NOT NULL,
     platform         VARCHAR   NOT NULL,
     collected_at     TIMESTAMP NOT NULL,
     year             SMALLINT  NOT NULL,
     month            TINYINT   NOT NULL,
     day              TINYINT   NOT NULL,
     response_time_ms INTEGER,
-    is_success       BOOLEAN   NOT NULL,
-    source_query_id  VARCHAR   NOT NULL
+    is_success       BOOLEAN   NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS common.metric_cpu (
-    instance_key        UUID      NOT NULL,
+    instance_id         INTEGER   NOT NULL,
     platform            VARCHAR   NOT NULL,
     collected_at        TIMESTAMP NOT NULL,
     year                SMALLINT  NOT NULL,
@@ -101,13 +104,12 @@ CREATE TABLE IF NOT EXISTS common.metric_cpu (
     day                 TINYINT   NOT NULL,
     engine_cpu_percent  SMALLINT,            -- SQL: SQLServerProcessCPUUtilization
     other_cpu_percent   SMALLINT,            -- SQL: OtherProcessCPUUtilization
-    system_idle_percent SMALLINT,
-    source_query_id     VARCHAR   NOT NULL
+    system_idle_percent SMALLINT
 );
 
 -- Unified memory stream (curated superset; rows are sparse per platform/collector).
 CREATE TABLE IF NOT EXISTS common.metric_memory (
-    instance_key            UUID      NOT NULL,
+    instance_id             INTEGER   NOT NULL,
     platform                VARCHAR   NOT NULL,
     collected_at            TIMESTAMP NOT NULL,
     year                    SMALLINT  NOT NULL,
@@ -116,26 +118,24 @@ CREATE TABLE IF NOT EXISTS common.metric_memory (
     page_residency_seconds  BIGINT,          -- SQL Server PLE only
     buffer_hit_ratio        DECIMAL(5,2),    -- PostgreSQL only (future)
     grants_pending          INTEGER,         -- SQL only
-    grants_outstanding      INTEGER,         -- SQL only
-    source_query_id         VARCHAR   NOT NULL
+    grants_outstanding      INTEGER          -- SQL only
 );
 
 CREATE TABLE IF NOT EXISTS common.metric_sessions (
-    instance_key     UUID      NOT NULL,
+    instance_id      INTEGER   NOT NULL,
     platform         VARCHAR   NOT NULL,
     collected_at     TIMESTAMP NOT NULL,
     year             SMALLINT  NOT NULL,
     month            TINYINT   NOT NULL,
     day              TINYINT   NOT NULL,
-    active_sessions  INTEGER,
-    source_query_id  VARCHAR   NOT NULL
+    active_sessions  INTEGER
 );
 
 -- Per-database IO. CUMULATIVE counters — deltas are computed read-side in the scoring views,
 -- with reset/restart guards. last_restart_at enables the restart-hour exclusion.
 CREATE TABLE IF NOT EXISTS common.metric_database_io (
-    instance_key          UUID      NOT NULL,
-    database_key          UUID      NOT NULL,
+    instance_id           INTEGER   NOT NULL,
+    database_id           INTEGER   NOT NULL,
     platform              VARCHAR   NOT NULL,
     collected_at          TIMESTAMP NOT NULL,
     year                  SMALLINT  NOT NULL,
@@ -149,21 +149,19 @@ CREATE TABLE IF NOT EXISTS common.metric_database_io (
     num_of_bytes_written  BIGINT,
     io_stall_write_ms     BIGINT,
     io_stall              BIGINT,
-    size_on_disk_bytes    BIGINT,
-    source_query_id       VARCHAR   NOT NULL
+    size_on_disk_bytes    BIGINT
 );
 
 -- Per-database blocking summary (count of blocked sessions per collection). Feeds blocker ratio.
 CREATE TABLE IF NOT EXISTS common.metric_blocking (
-    instance_key           UUID      NOT NULL,
-    database_key           UUID      NOT NULL,
+    instance_id            INTEGER   NOT NULL,
+    database_id            INTEGER   NOT NULL,
     platform               VARCHAR   NOT NULL,
     collected_at           TIMESTAMP NOT NULL,
     year                   SMALLINT  NOT NULL,
     month                  TINYINT   NOT NULL,
     day                    TINYINT   NOT NULL,
-    blocked_session_count  INTEGER,
-    source_query_id        VARCHAR   NOT NULL
+    blocked_session_count  INTEGER
 );
 
 ------------------------------------------------------------------------------------------------
@@ -172,7 +170,7 @@ CREATE TABLE IF NOT EXISTS common.metric_blocking (
 
 -- One row per (collector, instance) per cycle — including empty collections (status='empty').
 CREATE TABLE IF NOT EXISTS common.collection_log (
-    instance_key     UUID,
+    instance_id      INTEGER,
     platform         VARCHAR,
     collector_name   VARCHAR   NOT NULL,
     collected_at     TIMESTAMP NOT NULL,
@@ -181,12 +179,11 @@ CREATE TABLE IF NOT EXISTS common.collection_log (
     day              TINYINT   NOT NULL,
     rows_collected   INTEGER,
     duration_ms      INTEGER,
-    status           VARCHAR,              -- 'ok' | 'empty' | 'error'
-    source_query_id  VARCHAR   NOT NULL
+    status           VARCHAR               -- 'ok' | 'empty' | 'error'
 );
 
 CREATE TABLE IF NOT EXISTS common.collection_errors (
-    instance_key     UUID,
+    instance_id      INTEGER,
     instance_fqn     VARCHAR,
     platform         VARCHAR,
     collector_name   VARCHAR,
@@ -204,8 +201,8 @@ CREATE TABLE IF NOT EXISTS common.collection_errors (
 
 -- Per-(instance,database,hour) health score — faithful to legacy ReportInstanceAllMetrics.
 CREATE TABLE IF NOT EXISTS common.health_scores (
-    instance_key          UUID      NOT NULL,
-    database_key          UUID      NOT NULL,
+    instance_id           INTEGER   NOT NULL,
+    database_id           INTEGER   NOT NULL,
     platform              VARCHAR   NOT NULL,
     coll_hr               TIMESTAMP NOT NULL,   -- hourly bucket
     year                  SMALLINT  NOT NULL,

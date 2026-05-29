@@ -1,7 +1,7 @@
 -- pack: sqlserver  collector: metric_cpu  ->  common.metric_cpu
 -- Average CPU over the last 15 RING_BUFFER_SCHEDULER_MONITOR samples.
 -- Pure platform SQL: NO identity literal, NO @UTCOFFSET. The collector stamps
--- instance_key/platform/collected_at/year/month/day/source_query_id after the read.
+-- instance_id/platform/collected_at/year/month/day after the read.
 -- Aliases are snake_case and match common.metric_cpu exactly (fixes DATATYPE-VALIDATION debt).
 WITH ring AS (
     SELECT TOP (15)

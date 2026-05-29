@@ -1,0 +1,20 @@
+{
+  "name": "sqldash-bench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SQLDash ingest-method evaluation harness. M1/M4 (all-DuckDB ODBC fan-out -> stage -> INSERT/MERGE) are TypeScript over @duckdb/node-api; M2/M3 are PowerShell. Pinned to the DuckDB 1.5.3 storage version.",
+  "scripts": {
+    "m1": "tsx src/m1-odbc-insert.ts",
+    "m4": "tsx src/m4-odbc-merge.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@duckdb/node-api": "1.5.3-r.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.2"
+  }
+}

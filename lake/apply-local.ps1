@@ -25,6 +25,7 @@ $ddl = ($ddlFiles | ForEach-Object { Get-Content -Raw (Join-Path $PSScriptRoot "
 $sql = @"
 INSTALL ducklake; LOAD ducklake; INSTALL httpfs; LOAD httpfs;
 ATTACH IF NOT EXISTS 'ducklake:$catalogFwd' AS lake (DATA_PATH '$dataPathFwd');
+CALL lake.set_option('parquet_compression', 'zstd');   -- persisted in catalog; all writes ZSTD
 USE lake;
 $ddl
 SELECT table_schema, table_name FROM information_schema.tables

@@ -1,5 +1,5 @@
 -- pack: sqlserver  collector: databases  ->  common.databases
--- Database registry/current state. Returns database_name (collector resolves -> database_key).
+-- Database registry/current state. Returns the native database_id (key) + database_name (attribute).
 WITH file_stats AS (
     SELECT database_id, type, SUM(size * 8.0 / 1024) AS size_mb
     FROM sys.master_files
