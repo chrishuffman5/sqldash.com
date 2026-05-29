@@ -9,9 +9,10 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$CatalogDb = 'sqldash_catalog',
-    [string]$Prefix    = 'sqldash',
-    [string]$Region    = 'us-east-1'
+    [string]$CatalogDb  = 'sqldash_catalog',
+    [string]$Prefix     = 'sqldash',
+    [string]$Region     = 'us-east-1',
+    [string]$AwsProfile = 'ducklake'   # bridge profile whose credential_process feeds the SDK chain
 )
 $ErrorActionPreference = 'Stop'
 
@@ -20,21 +21,20 @@ $kv = @{}; $cs.Split(';') | Where-Object { $_ } | ForEach-Object { $k,$v = $_.Sp
 $pw = $kv['Password'].Replace('\!','!')   # vault stores it escaped (\!); real TCP/scram password de-escapes the !
 $pgconn = "dbname=$CatalogDb host=$($kv['Server']) port=$($kv['Port']) user=$($kv['User Id']) password=$pw"
 
+# S3 auth via the DuckDB `aws` extension credential_chain (CHAIN 'process') — no keys in SQL.
+$env:AWS_PROFILE = $AwsProfile
 $acct = (aws sts get-caller-identity --query Account --output text | Out-String).Trim()
 $dataPath = "s3://sqldash-data-$acct/$Prefix/"
-# credential_chain doesn't resolve SSO/temp creds here; export the resolved creds explicitly.
-$cred = aws configure export-credentials --format process | ConvertFrom-Json
-$tok  = if ($cred.SessionToken) { ", SESSION_TOKEN '$($cred.SessionToken)'" } else { "" }
 Write-Host "catalog = ducklake:postgres (db=$CatalogDb host=$($kv['Server']))" -ForegroundColor Cyan
-Write-Host "data    = $dataPath" -ForegroundColor Cyan
+Write-Host "data    = $dataPath  (S3 via aws ext credential_chain, profile=$AwsProfile)" -ForegroundColor Cyan
 
 $ddl   = @('00_schemas.sql','10_common.sql','20_sqlserver.sql','30_partition.sql','40_seed.sql' |
     ForEach-Object { Get-Content -Raw (Join-Path $PSScriptRoot "ddl/$_") }) -join "`n"
 $views = Get-Content -Raw (Join-Path $PSScriptRoot 'views/scoring.sql')
 
 $sql = @"
-INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres; INSTALL httpfs; LOAD httpfs;
-CREATE OR REPLACE SECRET s3cred (TYPE s3, KEY_ID '$($cred.AccessKeyId)', SECRET '$($cred.SecretAccessKey)'$tok, REGION '$Region');
+INSTALL aws; LOAD aws; INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres; INSTALL httpfs; LOAD httpfs;
+CREATE OR REPLACE SECRET s3cred (TYPE s3, PROVIDER credential_chain, CHAIN 'process', REGION '$Region');
 ATTACH 'ducklake:postgres:$pgconn' AS lake (DATA_PATH '$dataPath');
 USE lake;
 $ddl

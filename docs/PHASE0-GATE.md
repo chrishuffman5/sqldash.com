@@ -8,7 +8,9 @@ stack before scaling. This is that result.
 - **DuckLake** (v1.0+ format) via **DuckDB 1.5.3** + extensions `ducklake`, `postgres`, `httpfs`.
 - **Catalog (metadata):** PostgreSQL 17 database `sqldash_catalog` in the local `postgres17` Docker container.
 - **Data:** S3 bucket `s3://sqldash-data-<account-id>/sqldash/` (us-east-1), ZSTD Parquet.
-- Catalog connection from the PowerShell secret vault; S3 via explicitly-exported (SSO/temp) AWS creds.
+- Catalog connection from the PowerShell secret vault. **S3 auth via the DuckDB `aws` extension
+  `credential_chain` (`CHAIN 'process'`)** resolving an `~/.aws` bridge profile `ducklake` — no keys in
+  code, auto-refreshing.
 
 ## Method
 
@@ -52,8 +54,11 @@ Reproduce: `pwsh lake/run-gate.ps1 -Writers 8 -Rounds 25 -Batch 500`.
 - Writers are concurrent **connections/instances** within a bounded N, not a literal thousands-of-hosts
   fleet; the catalog commit path exercised is identical, but absolute throughput on production hardware /
   network to S3 will differ — re-run with realistic N and batch sizes before final sign-off.
-- The S3 secret uses **exported temporary (SSO) creds** that expire (~1h); long runs need a refresh or an
-  instance role. `credential_chain` did not resolve the SSO creds here, hence explicit export.
+- **S3 credentials** resolve through the `aws` extension's `credential_chain` (`CHAIN 'process'`) via an
+  `~/.aws` profile `ducklake` whose `credential_process` runs
+  `aws configure export-credentials --profile default --format process`. DuckDB fetches and **auto-refreshes**
+  the temporary creds itself — no keys in code or SQL. (The default `config`-only chain can't see the custom
+  `aws login` creds; the bridge profile is the fix. The `ducklake` profile must exist in `~/.aws/config`.)
 - The gate commits one 500-row batch per commit to stress *commit rate*; the production writer batches far
   more per commit, so effective rows/sec is much higher than the gate's stress figure.
 

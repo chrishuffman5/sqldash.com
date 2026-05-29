@@ -16,9 +16,8 @@ import { randomUUID } from 'node:crypto';
 const PGCONN = process.env.SQLDASH_PGCONN ?? '';
 const DATA   = process.env.SQLDASH_DATA ?? '';
 const REGION = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION ?? 'us-east-1';
-const KEY    = process.env.AWS_ACCESS_KEY_ID ?? '';
-const SECRET = process.env.AWS_SECRET_ACCESS_KEY ?? '';
-const TOKEN  = process.env.AWS_SESSION_TOKEN ?? '';
+// S3 auth: the DuckDB `aws` extension resolves creds via PROVIDER credential_chain (CHAIN 'process'),
+// reading the AWS_PROFILE bridge profile from the environment — no keys in code.
 const N         = Number(process.env.GATE_WRITERS ?? 8);
 const ROUNDS    = Number(process.env.GATE_ROUNDS ?? 25);
 const BATCH     = Number(process.env.GATE_BATCH ?? 500);
@@ -34,9 +33,8 @@ type Stats = { commits: number; rows: number; conflicts: number; errors: number;
 async function makeWriter(): Promise<DuckDBConnection> {
   const inst = await DuckDBInstance.create(':memory:');
   const c = await inst.connect();
-  await c.run('INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres; INSTALL httpfs; LOAD httpfs;');
-  const tok = TOKEN ? `, SESSION_TOKEN '${TOKEN}'` : '';
-  await c.run(`CREATE OR REPLACE SECRET s3cred (TYPE s3, KEY_ID '${KEY}', SECRET '${SECRET}'${tok}, REGION '${REGION}')`);
+  await c.run('INSTALL aws; LOAD aws; INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres; INSTALL httpfs; LOAD httpfs;');
+  await c.run(`CREATE OR REPLACE SECRET s3cred (TYPE s3, PROVIDER credential_chain, CHAIN 'process', REGION '${REGION}')`);
   await c.run(`ATTACH 'ducklake:postgres:${PGCONN}' AS lake (DATA_PATH '${DATA}')`);
   await c.run('USE lake;');
   return c;
@@ -66,7 +64,7 @@ async function runWriter(id: number, c: DuckDBConnection, s: Stats): Promise<voi
 }
 
 async function main(): Promise<void> {
-  if (!PGCONN || !DATA || !KEY) { console.error('missing env (SQLDASH_PGCONN / SQLDASH_DATA / AWS creds)'); process.exit(2); }
+  if (!PGCONN || !DATA) { console.error('missing env (SQLDASH_PGCONN / SQLDASH_DATA)'); process.exit(2); }
   console.error(`gate: ${N} writers x ${ROUNDS} rounds x ${BATCH} rows -> common.metric_cpu partition (sqlserver,${Y}-${M}-${D})`);
 
   const conns = await Promise.all(Array.from({ length: N }, () => makeWriter()));

@@ -13,12 +13,11 @@ $kv = @{}; $cs.Split(';') | Where-Object { $_ } | ForEach-Object { $k,$v = $_.Sp
 $pw = $kv['Password'].Replace('\!','!')
 $env:SQLDASH_PGCONN = "dbname=$CatalogDb host=$($kv['Server']) port=$($kv['Port']) user=$($kv['User Id']) password=$pw"
 
-# S3 data path + AWS creds (resolved/exported so the gate's S3 secret works with SSO/temp creds)
+# S3 auth via the aws extension credential_chain (CHAIN 'process' resolves the ducklake bridge profile)
+$env:AWS_PROFILE = 'ducklake'
+$env:AWS_REGION  = 'us-east-1'
 $acct = (aws sts get-caller-identity --query Account --output text | Out-String).Trim()
 $env:SQLDASH_DATA = "s3://sqldash-data-$acct/sqldash/"
-$cred = aws configure export-credentials --format process | ConvertFrom-Json
-$env:AWS_ACCESS_KEY_ID = $cred.AccessKeyId; $env:AWS_SECRET_ACCESS_KEY = $cred.SecretAccessKey
-$env:AWS_SESSION_TOKEN = $cred.SessionToken; $env:AWS_REGION = 'us-east-1'
 $env:GATE_WRITERS = "$Writers"; $env:GATE_ROUNDS = "$Rounds"; $env:GATE_BATCH = "$Batch"
 
 function Show-S3([string]$label) {
