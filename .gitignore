@@ -1,6 +1,5 @@
 # Legacy SQLDash code + third-party reference (kept locally, never published)
 legacy/
-PerformanceMonitor/
 
 # New SQLDash system — local dev artifacts
 lake/local/

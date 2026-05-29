@@ -42,6 +42,73 @@ pwsh test-scoring.ps1                              # repeatable scoring parity t
 cd ../mcp; npm install; npm run smoke              # MCP stdio smoke test
 ```
 
+## Cloud setup (S3 data store + Secrets Manager)
+
+In production the DuckLake lakehouse keeps its **data files in S3** and its **catalog (metadata) in
+PostgreSQL**. Two AWS resources back this. PostgreSQL itself is a **prerequisite you provide** (e.g. a
+local Docker `postgres:17` during development) — its setup is out of scope here.
+
+**Prerequisites**
+- AWS CLI v2 configured with valid credentials in `~/.aws` (this repo's region is `us-east-1`). If your
+  session has expired, reauthenticate first (e.g. `aws sso login`).
+- A reachable **PostgreSQL 17** — the DuckLake catalog DB.
+
+### 1. S3 bucket (DuckLake data)
+
+Bucket names are globally unique, so suffix with your AWS **account ID** (`<account-id>`):
+
+```bash
+aws sts get-caller-identity --query Account --output text     # prints your <account-id>
+aws s3 mb s3://sqldash-data-<account-id> --region us-east-1
+```
+
+PowerShell, filling in the account ID automatically:
+
+```powershell
+$acct = aws sts get-caller-identity --query Account --output text
+aws s3 mb "s3://sqldash-data-$acct" --region us-east-1
+```
+
+This bucket is the DuckLake `DATA_PATH`; point the writer/MCP at it with
+`SQLDASH_DATA=s3://sqldash-data-<account-id>/`.
+
+### 2. Secrets Manager secret (Postgres catalog admin creds)
+
+Store the catalog DB connection in Secrets Manager so the collector/writer/MCP never carry the password
+in config. Template:
+
+```bash
+aws secretsmanager create-secret \
+  --name sqldash-postgres-admin \
+  --secret-string '{"host":"<pg-host>","port":5432,"username":"<admin-user>","password":"<admin-pass>"}'
+```
+
+On Windows, pull the values straight from your PowerShell secret vault so the password is never written to
+disk or committed:
+
+```powershell
+# parse the stored "key=value;" connection string -> JSON -> Secrets Manager
+$cs     = Get-Secret Postgres17_ConnectionString -AsPlainText
+$kv     = @{}; $cs.Split(';') | Where-Object { $_ } | ForEach-Object { $k,$v = $_.Split('=',2); $kv[$k.Trim()] = $v }
+$secret = @{ host = $kv['Server']; port = [int]$kv['Port']; username = $kv['User Id']; password = $kv['Password'] } | ConvertTo-Json -Compress
+aws secretsmanager create-secret --name sqldash-postgres-admin --secret-string $secret
+```
+
+> Set `host` to the address the writer/MCP can actually reach — use `localhost` only when those processes
+> run on the same host as Postgres. (If JSON quoting trips up your shell, write the JSON to a temp file and
+> pass `--secret-string file://secret.json`, then delete it.)
+
+Verify:
+
+```bash
+aws s3 ls | grep sqldash-data
+aws secretsmanager get-secret-value --secret-id sqldash-postgres-admin --query SecretString --output text
+```
+
+These two resources are where the production lake plugs in: `SQLDASH_DATA` → the S3 bucket, and the
+`sqldash-postgres-admin` secret → the DuckLake catalog connection (`SQLDASH_CATALOG`). The local-dev loop
+above uses a DuckDB-file catalog + local directory instead, so neither AWS resource is required to run it.
+
 ## Status
 
 Phase 0 is proven end-to-end on SQL Server 2025 + DuckLake 1.5.3: collect → typed Parquet →
