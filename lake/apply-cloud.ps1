@@ -12,7 +12,8 @@ param(
     [string]$CatalogDb  = 'sqldash_catalog',
     [string]$Prefix     = 'sqldash',
     [string]$Region     = 'us-east-1',
-    [string]$AwsProfile = 'ducklake'   # bridge profile whose credential_process feeds the SDK chain
+    [string]$AwsProfile = 'ducklake',  # bridge profile whose credential_process feeds the SDK chain
+    [switch]$Rebuild                   # drop common/sqlserver schemas first (needed when column TYPES change)
 )
 $ErrorActionPreference = 'Stop'
 
@@ -32,11 +33,21 @@ $ddl   = @('00_schemas.sql','10_common.sql','20_sqlserver.sql','30_partition.sql
     ForEach-Object { Get-Content -Raw (Join-Path $PSScriptRoot "ddl/$_") }) -join "`n"
 $views = Get-Content -Raw (Join-Path $PSScriptRoot 'views/scoring.sql')
 
+# Clean rebuild: DROP the schemas so column-type changes (UUID -> INTEGER) take effect, since
+# CREATE TABLE IF NOT EXISTS will not alter an existing table. Safe only when the lake is disposable.
+$dropSql = ''
+if ($Rebuild) {
+    Write-Host "rebuild: dropping common + sqlserver schemas first" -ForegroundColor Yellow
+    $dropSql = "DROP SCHEMA IF EXISTS common CASCADE; DROP SCHEMA IF EXISTS sqlserver CASCADE;"
+}
+
 $sql = @"
 INSTALL aws; LOAD aws; INSTALL ducklake; LOAD ducklake; INSTALL postgres; LOAD postgres; INSTALL httpfs; LOAD httpfs;
 CREATE OR REPLACE SECRET s3cred (TYPE s3, PROVIDER credential_chain, CHAIN 'process', REGION '$Region');
 ATTACH 'ducklake:postgres:$pgconn' AS lake (DATA_PATH '$dataPath');
+CALL lake.set_option('parquet_compression', 'zstd');   -- persisted in catalog; all writes ZSTD
 USE lake;
+$dropSql
 $ddl
 $views
 SELECT table_schema, count(*) AS objects FROM information_schema.tables WHERE table_catalog='lake' GROUP BY table_schema ORDER BY table_schema;

@@ -1,95 +1,44 @@
-# SQLDash (revived) — new system
+# SQLDash (revived) — status & component map
 
-Database-agnostic inventory + health-monitoring on **DuckLake/S3**. SQL Server first; PostgreSQL
-designed-for-but-deferred. Full plan: `~/.claude/plans/tidy-spinning-bunny.md`.
+Database-agnostic inventory + health monitoring on **DuckLake/S3** (ZSTD Parquet on S3 + PostgreSQL
+catalog). SQL Server first; PostgreSQL designed-for-but-deferred.
 
-## Architecture (split)
+- **How it works:** [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)
+- **Write-method decision + evidence:** [`docs/INGEST-DECISION.md`](INGEST-DECISION.md) · [`bench/results/SCORECARD.md`](../bench/results/SCORECARD.md)
+- **Storage acceptance gate:** [`docs/PHASE0-GATE.md`](PHASE0-GATE.md)
+
+## Model (direct-write, two tiers)
 
 ```
-PowerShell collectors  ->  S3 inbox (node-sharded Parquet)  ->  TS writer (sole DuckLake committer)  ->  DuckLake on S3  ->  MCP / scoring views
-   (Windows SSPI auth)       (self-describing rows)               (schema contract + dedupe)              common/sqlserver/postgres
+collectors  ──(query remote DB, stamp integer instance_id, write the result set)──►  DuckLake (PG catalog + S3)  ──►  MCP / scoring views
+ (SSPI auth, pooled parallel reads, in-process DuckDB.NET writer)                     common.* / sqlserver.* / postgres.*
 ```
 
-Collectors never touch the lake — they emit typed, self-describing Parquet and hand off. One writer
-is the only DuckLake committer, which sidesteps DuckLake's multi-writer commit-conflict problem.
+No file inbox, no separate writer service — the collector commits directly, like the legacy
+`SqlBulkCopy`-into-SQL-Server, with the Postgres catalog fronting the transactional load. Keys are
+**integers**: `instance_id` from the Postgres registry (IDENTITY) + native `database_id` — no GUIDs.
 
-## Layout
+## Component map
 
-- `lake/ddl/*.sql` — DuckLake schema (`common.*`, `sqlserver.*`), partitioning, threshold seed.
-- `lake/views/` — scoring view chain (port of `LoadMetricsIntoReportingTAble`) — WIP.
-- `lake/apply-local.ps1` — stand up a LOCAL DuckLake (DuckDB catalog + local data dir as S3 stand-in) and apply DDL.
-- `collector/SqlDashCollector.psm1` — SSPI connect, run pack query, stamp identity collector-side, emit typed Parquet.
-- `collector/Invoke-Collection.ps1` — Phase 0 runner (registers instance + runs instance-level collectors).
-- `collector/packs/<platform>/` — `collections.json` (per-collector emit contract) + `queries/*.sql`.
-- `writer/src/ingest.ts` — sole DuckLake committer: contract check (column+type set), dedupe, append.
-- `mcp/` — TypeScript MCP server (WIP).
+| Path | Role | State |
+|---|---|---|
+| `lake/ddl/*.sql` | DuckLake schema (`common.*`, `sqlserver.*`), partitioning, threshold seed | ✅ integer-keyed |
+| `lake/views/scoring.sql` | scoring view chain (port of `LoadMetricsIntoReportingTAble`) | ✅ parity test passes |
+| `lake/registry.sql` + `apply-registry.ps1` | Postgres `registry.instances` (IDENTITY) + fleet seed | ✅ |
+| `lake/apply-cloud.ps1` | attach cloud lake (PG catalog + S3) + schema/views + ZSTD (`-Rebuild`) | ✅ |
+| `lake/test-scoring.ps1` | repeatable scoring parity test | ✅ |
+| `collector/packs/<platform>/` | `collections.json` (emit contract) + `queries/*.sql` | ✅ integer-keyed |
+| `bench/` | ingest-method evaluation harness (4 runners + PG/S3 telemetry + scorecard) | ✅ complete |
+| `collector/SqlDashCollector.psm1`, `Invoke-Collection.ps1` | legacy inbox collector | ⏳ to be rewritten to direct-write |
+| `mcp/` | read-only MCP server over the lake | ✅ integer-keyed |
 
-## Key design points (locked)
+## What's done vs next
 
-- **Identity stamped collector-side**, never injected into the remote query (fixes the legacy
-  `'@InstanceID'` string-literal hazard). Every fact row carries `instance_key, platform,
-  collected_at, source_query_id`.
-- **`instance_key`/`database_key` are deterministic UUIDv5** in Phase 0 (idempotent by construction;
-  registration-authority UUIDv7 is the documented upgrade when rename/re-home matters).
-- **snake_case aliases == target columns == types**, enforced at emit (typed Parquet) AND at ingest
-  (writer rejects column/type-set mismatches to quarantine — guards against `union_by_name` silent
-  NULL-padding).
-- **Dedupe**: facts purge-then-insert by `source_query_id` (unique per emit); dimensions upsert by key.
+**Done:** integer-key refactor (DDL/views/packs/fixture), cloud lake provisioned + ZSTD, registry seeded,
+scoring parity, the storage gate (0 conflicts, ~9.6 commits/sec, 201→1 compaction), and the ingest-method
+benchmark (M2 — in-process DuckDB.NET + pooled SSPI — wins; see the decision doc).
 
-## Run the Phase 0 loop locally
-
-Requires: duckdb CLI 1.5.x, Node 20+, PowerShell 7, a reachable SQL Server (local Express works).
-
-```powershell
-pwsh lake/apply-local.ps1                       # create/upgrade local DuckLake + DDL
-pwsh collector/Invoke-Collection.ps1 -Server localhost   # collect -> Parquet inbox
-cd writer; npm install; npm run ingest          # inbox -> DuckLake (sole committer)
-```
-
-Inspect:
-```bash
-duckdb -c "ATTACH 'ducklake:<abs>/lake/local/catalog.ducklake' AS lake (DATA_PATH '<abs>/lake/local/data'); USE lake; SELECT * FROM common.metric_cpu;"
-```
-
-Local dev artifacts live under `lake/local/` (gitignored): `inbox/`, `processed/`, `quarantine/`,
-`catalog.ducklake`, `data/`.
-
-## Status (Phase 0 complete, proven end-to-end)
-
-On SQL Server 2025 Express + DuckLake 1.5.3, the whole loop works:
-- **Collect → typed Parquet → contract-checked ingest → DuckLake**, instance- and database-level
-  (per-database `database_key` resolved in the collector), joining on `instance_key`/`database_key`
-  with zero ETL.
-- **Scoring view chain** (`lake/views/scoring.sql`) — faithful port of `LoadMetricsIntoReportingTAble`.
-  Validated by a repeatable synthetic parity test (`lake/test-scoring.ps1`): IRC indices match
-  hand-computed expectations exactly, including LAG latency deltas, first-bucket skip,
-  restart-hour/reset guards, blocker ratio, inverted PLE bands, and the worst-DB instance rollup.
-- **MCP server** (`mcp/`) over a read-only DuckLake connection: `list_instances`, `instance_detail`,
-  `metric_history`, `problematic_instances`, `run_query` — smoke-tested over stdio (`npm run smoke`).
-
-Scoring intentionally excludes the current in-flight hour (legacy parity), so freshly collected
-real data scores once the hour rolls over; the synthetic test exercises complete past hours.
-
-Run the scoring test: `pwsh lake/test-scoring.ps1`.  Apply views to the local lake: `pwsh lake/apply-views-local.ps1`.
-
-### Cloud lake (Postgres catalog + S3) — provisioned + gate passed
-
-The production storage stack is stood up and the **Phase 0 acceptance gate passed** (see
-`docs/PHASE0-GATE.md`): DuckLake catalog in a PostgreSQL 17 database (`sqldash_catalog`) + data in S3
-(`s3://sqldash-data-<account-id>/sqldash/`). 8 concurrent writers to one partition → **0 conflicts**;
-throughput is commit-bound (~9.6 commits/sec) which confirms the batch-don't-trickle design; small files
-compact + reclaim cleanly (201 → 1 via `merge_adjacent_files` + `expire_snapshots` + `cleanup_old_files`).
-
-```powershell
-pwsh lake/apply-cloud.ps1     # attach cloud lake (PG catalog + S3) + apply schema/views
-pwsh lake/run-gate.ps1        # concurrency/throughput/file-sizing gate
-```
-
-### Deferred (next)
-- Wire the **writer + MCP to the cloud lake** (they create an S3 secret + use the PG-catalog DSN; env
-  override points `SQLDASH_CATALOG`/`SQLDASH_DATA` already exist — the writer needs the S3 secret added).
-- Long-lived S3 credentials (instance role / refresh) — the gate used exported temp SSO creds (~1h).
-- Scheduled compaction/expire/cleanup job (the DuckLake equivalent of the legacy partition-mgmt procs).
-- Collectors: `instance_details` (+`sqlserver.instance_details_ext`) and collector-generated `pings`.
-- Registration authority (UUIDv7 get-or-create) when rename/re-home matters — deterministic UUIDv5 for now.
-- WMI/volume + alerting subsystems.
+**Next:** build the production collector on the winning method (ping-first → pooled SSPI reads → in-process
+batched write, inlining/flush tuned), schedule maintenance, then `instance_details`/AlwaysOn/volume +
+alerting. The collector packaging (PowerShell-hosting-DuckDB.NET vs a .NET exe) is the open decision in
+[`docs/INGEST-DECISION.md`](INGEST-DECISION.md).

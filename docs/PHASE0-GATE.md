@@ -1,5 +1,13 @@
 # Phase 0 acceptance gate — DuckLake on Postgres catalog + S3
 
+> **Historical record.** This gate predates the integer-key refactor and the direct-write decision. Its
+> findings (0 conflicts, ~9.6 commits/sec ceiling, 201→1 compaction) stand and are carried forward, but the
+> "TypeScript writer / sole committer" framing is obsolete — collectors now write directly (see
+> [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) / [`docs/INGEST-DECISION.md`](INGEST-DECISION.md)). The gate's
+> standalone reproducer (`writer/gate.ts`, `lake/run-gate.ps1`) has been superseded by the ingest-method
+> harness `bench/` (see [`bench/results/SCORECARD.md`](../bench/results/SCORECARD.md)); the gate code remains
+> in git history.
+
 The plan gated the project on a concurrency/throughput/file-sizing benchmark against the real storage
 stack before scaling. This is that result.
 
@@ -64,7 +72,10 @@ Reproduce: `pwsh lake/run-gate.ps1 -Writers 8 -Rounds 25 -Batch 500`.
 
 ## Reproduce
 
+The gate's standalone runner was removed with the `writer/` tier. The same storage stack — and the same
+concurrency/throughput/file-sizing behavior — is now exercised by the ingest-method harness:
+
 ```powershell
-pwsh lake/apply-cloud.ps1          # provision/attach the cloud lake (PG catalog + S3) + schema
-pwsh lake/run-gate.ps1             # run the gate; prints JSON metrics + S3 file sizing
+pwsh lake/apply-cloud.ps1                                          # provision/attach the cloud lake (PG catalog + S3)
+pwsh bench/run-bench.ps1 -Methods M1,M2,M3,M4 -FleetLimit 1000 -Compact   # writes + PG/S3 telemetry + compaction
 ```

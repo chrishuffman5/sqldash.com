@@ -12,6 +12,15 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# .NET build output (rebuilt via `dotnet build` / `dotnet publish` — not committed)
+bin/
+obj/
+collector/runtime/lib/
+bench/dotnet/publish/
+
+# bench scorecards are reproducible run output
+bench/results/*.csv
+
 # Logs / temp
 *.log
 .env

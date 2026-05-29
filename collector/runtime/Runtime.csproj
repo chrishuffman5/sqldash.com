@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Deps-only project. Its sole purpose is to restore + publish the native+managed assemblies the
+       PowerShell collector hosts in-process: DuckDB.NET (DuckLake writer) + Microsoft.Data.SqlClient
+       (SSPI reader). Publish them with:
+           dotnet publish collector/runtime -c Release -o collector/runtime/lib
+       then `. collector/Initialize-SqlDashRuntime.ps1` loads them into the PowerShell session.
+       Pinned to the DuckDB 1.5.x line (matches the 1.5.3 DuckLake catalog) — verified working. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DuckDB.NET.Data.Full" Version="1.5.2" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.0.2" />
+  </ItemGroup>
+
+</Project>
