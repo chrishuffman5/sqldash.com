@@ -22,4 +22,5 @@ SELECT
               ELSE AVG(100 - system_idle - sql_util) END AS SMALLINT)                     AS other_cpu_percent,
     CAST(AVG(system_idle) AS SMALLINT)                                                    AS system_idle_percent
 FROM ring
+HAVING COUNT(*) > 0   -- empty ring buffer (fresh instance) -> 0 rows, not an all-NULL row reported as 'ok'
 OPTION (RECOMPILE);

@@ -46,24 +46,32 @@ cloud lake and MDS reads localhost via SSPI, both in one pwsh process. Gotchas b
 prepend `runtimes/win-x64/native` to PATH; load MDS from `runtimes/win/lib/net8.0` (the root DLL is a
 platform-agnostic facade that throws "not supported on this platform").
 
-## Follow-up implementation plan (production collector)
+## Follow-up implementation plan (production collector) — ✅ BUILT
 
-Builds the winning approach into the real, scheduled collector. Not started — this is the next effort.
+The winning approach is now implemented as the real collector in [`collector/`](../collector/README.md)
+and verified end-to-end (one cycle, all 8 collectors, 3 localhost instances → lake; flush+compact →
+ZSTD Parquet on S3 → read back). What landed:
 
-1. **Registry/eligibility** — read the fleet from `registry.instances`; **ping-first** every cycle (timed
-   connect + `SELECT 1`, 5 s timeout, `response_ms`/`is_success` → `common.pings`); only ping-responsive
-   instances proceed to DMV collection. (`common.pings` is a first-class alerting dataset: sustained 5000 ms
-   ⇒ offline.)
-2. **Collector core** — dot-source `collector/Initialize-SqlDashRuntime.ps1` (proven runtime loader), then
-   port `bench/dotnet/Program.cs`'s logic to PowerShell-hosting-DuckDB.NET: pooled MDS SSPI reads via a
-   runspace pool at 16–32; one persistent in-process DuckLake connection; Appender → staging → batched
-   `INSERT…SELECT`; one commit per large batch. Generic over the pack collectors (instance-level +
-   database-level), all six metrics, stamping the integer keys; log to `common.collection_log`/`_errors`.
-3. **Maintenance scheduler** — periodic `flush_inlined_data` + compaction (separate from collection; keep it
-   single-writer/scheduled, per the gate's note on concurrent compaction).
-4. **Config** — `data_inlining_row_limit` + flush-batch size as tunables; default to "inline the hot path,
-   bulk-flush on a timer."
-5. **Scheduling** — run on a cadence (Task Scheduler / service); per-cycle `collected_at`; jitter tolerated.
+1. ✅ **Registry/eligibility** — fleet read from `registry.instances` (via the DuckDB postgres ATTACH, no
+   psql dependency); **ping-first** each cycle (timed connect + `SELECT 1`, configurable timeout) writes
+   `common.pings` for **every** instance — success AND failure rows (the offline signal). One connect per
+   instance is reused for all DMV queries in the pack.
+2. ✅ **Collector core** (`Modules/SqlDashIngest.psm1`) — dot-sources `Initialize-SqlDashRuntime.ps1`, then
+   does pooled MDS SSPI reads via a **runspace pool** (each runspace LoadFrom's MDS so the type resolves)
+   and a **single persistent in-process DuckLake connection**; per collector: Appender → in-memory `stg`
+   → one `INSERT…SELECT` per flush batch. Generic over the pack (instance- and database-level), stamps the
+   integer keys, syncs `common.instances` from the registry, logs to `common.collection_log`/`_errors`.
+   Now **8 collectors**: the 6 metrics + `instance_details` + AlwaysOn `ha_databases`.
+3. ✅ **Maintenance** (`Invoke-Maintenance.ps1`) — `flush_inlined_data` → `merge_adjacent_files` →
+   `expire_snapshots` → `cleanup_old_files`; run on its own single-writer schedule.
+4. ✅ **Config** (`config/collector.json`) — `flush_batch`, `data_inlining_row_limit`, `read_threads`,
+   `ping_timeout_seconds` as tunables; default = inline the hot path, bulk-flush on the maintenance timer.
+5. ✅ **Scheduling** — `schtasks` recipes for collect (5 min) + maintain (hourly) documented in the
+   collector README (not auto-created).
+
+**Remaining (future):** volume capacity (WinRM/WMI — different collection mechanism, not a SQL query);
+SQL-auth instances (vault-backed UID/PWD; only integrated/SSPI wired today); alerting/email rollups; and
+combining the per-collector read fan-out further if connect cost ever dominates.
 
 ## Cleanup
 
@@ -74,11 +82,13 @@ Builds the winning approach into the real, scheduled collector. Not started — 
 - ✅ `writer/` tier deleted (`ingest.ts` + the S3-inbox concept; `lake/run-gate.ps1` too). `bench/`
   supersedes the gate; `mcp/` stays (read-only consumer). Gate code remains in git history.
 
-**Remaining (folds into the production-collector build):**
-- **Rewrite `collector/SqlDashCollector.psm1` + `collector/Invoke-Collection.ps1`** to direct-write; delete
-  the UUID helpers (`Get-Uuid5`/`Get-InstanceKey`/`Get-DatabaseKey`), the `dbkey` source, and the
-  Parquet-to-inbox path. (Left intact for now so the M2 reference code in `bench/dotnet` is the template.)
-- Keep `bench/` as the reproducible evaluation harness (or archive once the production collector lands).
+**Done (production-collector build):**
+- ✅ **Deleted `collector/SqlDashCollector.psm1`** (UUID helpers `Get-Uuid5`/`Get-InstanceKey`/
+  `Get-DatabaseKey`, the `dbkey` source, and the Parquet-to-inbox path) and **rewrote
+  `collector/Invoke-Collection.ps1`** to direct-write via the new `Modules/SqlDashIngest.psm1`.
+
+**Remaining:**
+- Keep `bench/` as the reproducible evaluation harness (or archive now that the production collector lands).
 
 ## What this spike already delivered (done)
 
