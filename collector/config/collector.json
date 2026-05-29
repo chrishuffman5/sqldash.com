@@ -1,0 +1,21 @@
+{
+  "_comment": "SQLDash direct-write collector config. The collector hosts DuckDB.NET + Microsoft.Data.SqlClient in PowerShell 7 (benchmarked winner M2 — see docs/INGEST-DECISION.md). Catalog + registry are PostgreSQL; data is ZSTD Parquet on S3, addressed as s3://<bucket_prefix>-<account>/<data_prefix>/. Secrets never live here: the Postgres password comes from the PowerShell Secret vault and is de-escaped for TCP/scram; S3 auth uses the aws-extension credential_chain.",
+  "catalog": {
+    "secret_name": "Postgres17_ConnectionString",
+    "catalog_db": "sqldash_catalog",
+    "registry_db": "sqldash_catalog"
+  },
+  "s3": {
+    "bucket_prefix": "sqldash-data",
+    "data_prefix": "sqldash",
+    "region": "us-east-1",
+    "aws_profile": "ducklake"
+  },
+  "ingest": {
+    "flush_batch": 250,
+    "data_inlining_row_limit": 500,
+    "read_threads": 24,
+    "ping_timeout_seconds": 5
+  },
+  "pack": "sqlserver"
+}

@@ -1,0 +1,21 @@
+{
+  "_comment": "Smoke-test config: points the production collector at the disposable bench database (sqldash_bench) provisioned by the ingest spike — it already holds the seeded registry.instances fleet (1000 rows -> localhost) AND a working DuckLake catalog at s3://sqldash-data-<acct>/sqldash-bench/. Use a small -InstanceIds subset so the test stays light. High data_inlining_row_limit keeps the test fully inlined in Postgres (no S3 PUTs).",
+  "catalog": {
+    "secret_name": "Postgres17_ConnectionString",
+    "catalog_db": "sqldash_bench",
+    "registry_db": "sqldash_bench"
+  },
+  "s3": {
+    "bucket_prefix": "sqldash-data",
+    "data_prefix": "sqldash-bench",
+    "region": "us-east-1",
+    "aws_profile": "ducklake"
+  },
+  "ingest": {
+    "flush_batch": 250,
+    "data_inlining_row_limit": 5000,
+    "read_threads": 16,
+    "ping_timeout_seconds": 5
+  },
+  "pack": "sqlserver"
+}

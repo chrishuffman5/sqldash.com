@@ -164,6 +164,44 @@ CREATE TABLE IF NOT EXISTS common.metric_blocking (
     blocked_session_count  INTEGER
 );
 
+-- Top wait types (CUMULATIVE since restart; deltas computed read-side, reset-guarded by last_restart_at).
+-- Grain: instance_id + wait_type + collected_at. The collector caps to the top 25 by wait_time_ms.
+CREATE TABLE IF NOT EXISTS common.metric_wait_stats (
+    instance_id          INTEGER   NOT NULL,
+    platform             VARCHAR   NOT NULL,
+    collected_at         TIMESTAMP NOT NULL,
+    year                 SMALLINT  NOT NULL,
+    month                TINYINT   NOT NULL,
+    day                  TINYINT   NOT NULL,
+    last_restart_at      TIMESTAMP,
+    wait_type            VARCHAR   NOT NULL,
+    waiting_tasks_count  BIGINT,
+    wait_time_ms         BIGINT,
+    signal_wait_time_ms  BIGINT,
+    max_wait_time_ms     BIGINT
+);
+
+-- Selected per-second Perfmon counters, stored RAW + CUMULATIVE (one wide row per instance per cycle).
+-- Rates (batch req/s, compiles/s, deadlocks/s, …) are computed read-side from deltas, reset-guarded.
+CREATE TABLE IF NOT EXISTS common.metric_perf_counters (
+    instance_id                        INTEGER   NOT NULL,
+    platform                           VARCHAR   NOT NULL,
+    collected_at                       TIMESTAMP NOT NULL,
+    year                               SMALLINT  NOT NULL,
+    month                              TINYINT   NOT NULL,
+    day                                TINYINT   NOT NULL,
+    last_restart_at                    TIMESTAMP,
+    batch_requests_per_sec_cumulative  BIGINT,
+    sql_compilations_cumulative        BIGINT,
+    sql_recompilations_cumulative      BIGINT,
+    page_reads_cumulative              BIGINT,
+    page_writes_cumulative             BIGINT,
+    lock_waits_cumulative              BIGINT,
+    deadlocks_cumulative               BIGINT,
+    page_splits_cumulative             BIGINT,
+    transactions_cumulative            BIGINT
+);
+
 ------------------------------------------------------------------------------------------------
 -- Operational logs
 ------------------------------------------------------------------------------------------------

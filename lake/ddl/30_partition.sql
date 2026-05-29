@@ -11,5 +11,12 @@ ALTER TABLE common.metric_database_io SET PARTITIONED BY (platform, year, month,
 ALTER TABLE common.metric_blocking    SET PARTITIONED BY (platform, year, month, day);
 ALTER TABLE common.collection_log     SET PARTITIONED BY (platform, year, month, day);
 ALTER TABLE common.collection_errors  SET PARTITIONED BY (platform, year, month, day);
+ALTER TABLE common.metric_wait_stats    SET PARTITIONED BY (platform, year, month, day);
+ALTER TABLE common.metric_perf_counters SET PARTITIONED BY (platform, year, month, day);
 ALTER TABLE common.health_scores      SET PARTITIONED BY (platform, year, month);
 ALTER TABLE sqlserver.ha_databases    SET PARTITIONED BY (year, month, day);  -- platform implicit (sqlserver schema)
+ALTER TABLE sqlserver.backup_status            SET PARTITIONED BY (year, month, day);
+ALTER TABLE sqlserver.integrity_status         SET PARTITIONED BY (year, month, day);
+ALTER TABLE sqlserver.ha_cluster_members       SET PARTITIONED BY (year, month, day);
+ALTER TABLE sqlserver.ha_availability_replicas SET PARTITIONED BY (year, month, day);
+ALTER TABLE sqlserver.mirroring_health         SET PARTITIONED BY (year, month, day);
