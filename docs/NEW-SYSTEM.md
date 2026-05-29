@@ -72,9 +72,24 @@ real data scores once the hour rolls over; the synthetic test exercises complete
 
 Run the scoring test: `pwsh lake/test-scoring.ps1`.  Apply views to the local lake: `pwsh lake/apply-views-local.ps1`.
 
+### Cloud lake (Postgres catalog + S3) — provisioned + gate passed
+
+The production storage stack is stood up and the **Phase 0 acceptance gate passed** (see
+`docs/PHASE0-GATE.md`): DuckLake catalog in a PostgreSQL 17 database (`sqldash_catalog`) + data in S3
+(`s3://sqldash-data-<account-id>/sqldash/`). 8 concurrent writers to one partition → **0 conflicts**;
+throughput is commit-bound (~9.6 commits/sec) which confirms the batch-don't-trickle design; small files
+compact + reclaim cleanly (201 → 1 via `merge_adjacent_files` + `expire_snapshots` + `cleanup_old_files`).
+
+```powershell
+pwsh lake/apply-cloud.ps1     # attach cloud lake (PG catalog + S3) + apply schema/views
+pwsh lake/run-gate.ps1        # concurrency/throughput/file-sizing gate
+```
+
 ### Deferred (next)
+- Wire the **writer + MCP to the cloud lake** (they create an S3 secret + use the PG-catalog DSN; env
+  override points `SQLDASH_CATALOG`/`SQLDASH_DATA` already exist — the writer needs the S3 secret added).
+- Long-lived S3 credentials (instance role / refresh) — the gate used exported temp SSO creds (~1h).
+- Scheduled compaction/expire/cleanup job (the DuckLake equivalent of the legacy partition-mgmt procs).
 - Collectors: `instance_details` (+`sqlserver.instance_details_ext`) and collector-generated `pings`.
-- Registration authority (UUIDv7 get-or-create) when instance rename/re-home matters — deterministic
-  UUIDv5 keys are used for now.
-- Phase 0 concurrency/throughput gate against a real Postgres catalog + S3 (the local lake uses a
-  DuckDB-file catalog + local dir); compaction/retention jobs; WMI/volume + alerting subsystems.
+- Registration authority (UUIDv7 get-or-create) when rename/re-home matters — deterministic UUIDv5 for now.
+- WMI/volume + alerting subsystems.

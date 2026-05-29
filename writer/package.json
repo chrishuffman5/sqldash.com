@@ -6,6 +6,7 @@
   "description": "SQLDash DuckLake writer/ingester — the sole DuckLake committer. Reads inbox Parquet, enforces the schema contract, appends to DuckLake.",
   "scripts": {
     "ingest": "tsx src/ingest.ts",
+    "gate": "tsx src/gate.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
